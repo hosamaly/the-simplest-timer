@@ -292,6 +292,14 @@
                 <input type="number" id="customTime" min="1" max="3600" placeholder="Enter seconds">
             </div>
             <div class="custom-input">
+                <label for="setsControl">Number of sets: <span id="setsValue">1</span></label>
+                <input type="range" id="setsControl" min="1" max="10" value="1">
+            </div>
+            <div class="custom-input">
+                <label for="delayControl">Delay between sets (seconds): <span id="delayValue">0</span></label>
+                <input type="range" id="delayControl" min="0" max="60" value="0">
+            </div>
+            <div class="custom-input">
                 <label for="volumeControl">Volume: <span id="volumeValue">50%</span></label>
                 <input type="range" id="volumeControl" min="0" max="100" value="50">
             </div>
@@ -336,11 +344,17 @@
         let isRunning = false;
         let wakeLock = null;
         let volume = 0.5; // Default 50%
+        let sets = 1; // Number of sets
+        let delay = 0; // Delay between sets in seconds
+        let currentSet = 1; // Current set being executed
+        let isInDelay = false; // Whether we're in a delay period
 
         // Load saved preferences from localStorage
         function loadPreferences() {
             const savedDuration = localStorage.getItem('timerDuration');
             const savedVolume = localStorage.getItem('timerVolume');
+            const savedSets = localStorage.getItem('timerSets');
+            const savedDelay = localStorage.getItem('timerDelay');
             
             if (savedDuration) {
                 duration = parseInt(savedDuration);
@@ -351,12 +365,26 @@
                 volumeControl.value = Math.round(volume * 100);
                 volumeValue.textContent = `${Math.round(volume * 100)}%`;
             }
+            
+            if (savedSets) {
+                sets = parseInt(savedSets);
+                setsControl.value = sets;
+                setsValue.textContent = sets;
+            }
+            
+            if (savedDelay) {
+                delay = parseInt(savedDelay);
+                delayControl.value = delay;
+                delayValue.textContent = delay;
+            }
         }
 
         // Save preferences to localStorage
         function savePreferences() {
             localStorage.setItem('timerDuration', duration.toString());
             localStorage.setItem('timerVolume', volume.toString());
+            localStorage.setItem('timerSets', sets.toString());
+            localStorage.setItem('timerDelay', delay.toString());
         }
 
         // Elements
@@ -372,6 +400,10 @@
         const progressRing = document.getElementById('progressRing');
         const volumeControl = document.getElementById('volumeControl');
         const volumeValue = document.getElementById('volumeValue');
+        const setsControl = document.getElementById('setsControl');
+        const setsValue = document.getElementById('setsValue');
+        const delayControl = document.getElementById('delayControl');
+        const delayValue = document.getElementById('delayValue');
 
         // Progress circle setup - calculate based on actual SVG size
         function setupProgressCircle() {
@@ -477,17 +509,41 @@
         }
 
         function updateDisplay() {
-            durationDisplay.textContent = formatDuration(duration);
+            let displayText = formatDuration(duration);
+            if (sets > 1) {
+                displayText += ` × ${sets}`;
+                if (delay > 0) {
+                    displayText += ` (${delay}s rest)`;
+                }
+            }
+            durationDisplay.textContent = displayText;
+        }
+
+        function updateSetDisplay() {
+            if (sets > 1 && isRunning) {
+                if (isInDelay) {
+                    durationDisplay.textContent = `Rest before set ${currentSet}`;
+                } else {
+                    durationDisplay.textContent = `Set ${currentSet} of ${sets}`;
+                }
+            }
         }
 
         function startTimer() {
             if (isRunning) return;
             
             isRunning = true;
+            currentSet = 1;
+            isInDelay = false;
+            requestWakeLock();
+            runSet();
+        }
+
+        function runSet() {
             timeRemaining = duration;
             timerButton.querySelector('.button-text').textContent = 'STOP';
             timerButton.classList.add('running');
-            requestWakeLock();
+            updateSetDisplay();
 
             const startTime = Date.now();
             const endTime = startTime + (duration * 1000);
@@ -500,23 +556,76 @@
                 updateProgress(progress);
 
                 if (timeRemaining <= 0) {
-                    stopTimer();
+                    clearInterval(timerId);
                     playCompletionSound();
-                    // Vibrate when complete
+                    
+                    // Vibrate when set complete
                     if (navigator.vibrate) {
-                        navigator.vibrate([200, 100, 200, 100, 200]);
+                        navigator.vibrate([200, 100, 200]);
+                    }
+                    
+                    updateProgress(0);
+                    
+                    // Check if there are more sets
+                    if (currentSet < sets) {
+                        currentSet++;
+                        
+                        // Start delay if configured
+                        if (delay > 0) {
+                            startDelay();
+                        } else {
+                            runSet();
+                        }
+                    } else {
+                        // All sets complete
+                        completeAllSets();
                     }
                 }
             }, 100);
         }
 
+        function startDelay() {
+            isInDelay = true;
+            timeRemaining = delay;
+            updateSetDisplay();
+
+            const startTime = Date.now();
+            const endTime = startTime + (delay * 1000);
+
+            timerId = setInterval(() => {
+                const now = Date.now();
+                timeRemaining = Math.max(0, Math.ceil((endTime - now) / 1000));
+                
+                const progress = ((delay - timeRemaining) / delay) * 100;
+                updateProgress(progress);
+
+                if (timeRemaining <= 0) {
+                    clearInterval(timerId);
+                    updateProgress(0);
+                    isInDelay = false;
+                    runSet();
+                }
+            }, 100);
+        }
+
+        function completeAllSets() {
+            stopTimer();
+            // Final vibration pattern for completion
+            if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200, 100, 200]);
+            }
+        }
+
         function stopTimer() {
             isRunning = false;
+            isInDelay = false;
             clearInterval(timerId);
             timerId = null;
+            currentSet = 1;
             timerButton.querySelector('.button-text').textContent = 'START';
             timerButton.classList.remove('running');
             updateProgress(0);
+            updateDisplay();
             releaseWakeLock();
         }
 
@@ -576,6 +685,22 @@
             const value = parseInt(e.target.value);
             volume = value / 100;
             volumeValue.textContent = `${value}%`;
+            savePreferences();
+        });
+
+        setsControl.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            sets = value;
+            setsValue.textContent = value;
+            updateDisplay();
+            savePreferences();
+        });
+
+        delayControl.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            delay = value;
+            delayValue.textContent = value;
+            updateDisplay();
             savePreferences();
         });
 
