@@ -470,6 +470,37 @@
                 osc2.start(audioContext.currentTime);
                 osc2.stop(audioContext.currentTime + 1.5);
             }, 200);
+            
+            // Vibration for completion
+            if (navigator.vibrate) {
+                navigator.vibrate([200, 100, 200]);
+            }
+        }
+
+        // Gentler "start" sound for beginning of next set
+        function playStartSound() {
+            if (volume === 0) return; // Skip if muted
+            
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            oscillator.frequency.setValueAtTime(392.00, audioContext.currentTime); // G4 (lower, softer)
+            oscillator.type = 'sine';
+            
+            gainNode.gain.setValueAtTime(0.2 * volume, audioContext.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.8);
+
+            oscillator.start(audioContext.currentTime);
+            oscillator.stop(audioContext.currentTime + 0.8);
+            
+            // Gentle vibration for start
+            if (navigator.vibrate) {
+                navigator.vibrate(100);
+            }
         }
 
         // Wake Lock with error handling
@@ -544,6 +575,9 @@
             timerButton.querySelector('.button-text').textContent = 'STOP';
             timerButton.classList.add('running');
             updateSetDisplay();
+            
+            // Play start sound at the beginning of each set
+            playStartSound();
 
             const startTime = Date.now();
             const endTime = startTime + (duration * 1000);
@@ -557,12 +591,7 @@
 
                 if (timeRemaining <= 0) {
                     clearInterval(timerId);
-                    playCompletionSound();
-                    
-                    // Vibrate when set complete
-                    if (navigator.vibrate) {
-                        navigator.vibrate([200, 100, 200]);
-                    }
+                    playCompletionSound(); // Includes vibration
                     
                     updateProgress(0);
                     
@@ -603,7 +632,7 @@
                     clearInterval(timerId);
                     updateProgress(0);
                     isInDelay = false;
-                    runSet();
+                    runSet(); // runSet will play the start sound
                 }
             }, 100);
         }
